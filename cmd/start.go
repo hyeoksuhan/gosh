@@ -1,8 +1,10 @@
 package cmd
 
 import (
-  "fmt"
-
+  "os"
+  "os/exec"
+  "os/signal"
+  "syscall"
   "github.com/spf13/cobra"
 
   "github.com/AlecAivazis/survey/v2"
@@ -12,71 +14,25 @@ import (
 )
 
 func init() {
-  println("start.go init()")
   cmdStart.Flags().String("profile", "", "AWS profile name")
   RootCmd.AddCommand(cmdStart)
 }
 
-var cmdStart := &cobra.Command{
+var cmdStart = &cobra.Command{
   Use: "start",
   Short: "Start session with SSM",
   Long: "Start session with SSM",
   Run: func(cmd *cobra.Command, args []string) {
-    profile, ok := cmd.Flags().getString("profile")
-    println(profile, ok)
+    profile, _ := cmd.Flags().GetString("profile")
 
     if profile == "" {
       profile = askProfile()
     }
 
-    sess, err := session.NewSessionWithOptions(session.Options{
-      Profile: profile,
-      Config: aws.Config{
-        Region: aws.String("ap-northeast-2"),
-      },
-      SharedConfigState: session.SharedConfigEnable,
-    })
-
-    if err != nil {
-      println(err.Error())
-      return
-    }
-
-    svc := ec2.New(sess)
-    input := &ec2.DescribeInstancesInput{
-      Filters: []*ec2.Filter{
-        {
-          Name: aws.String("instance-state-name"),
-          Values: []*string{aws.String("running")},
-        },
-      },
-    }
-
-    result, err := svc.DescribeInstances(input)
-    if err != nil {
-      println(err.Error())
-      return
-    }
-
-    instances := make(map[string]string)
-
-    for _, reservation := range result.Reservations {
-      for _, instance := range reservation.Instances {
-        name := ""
-        for _, tag := range instance.Tags {
-          if *tag.Key == "Name" {
-            name = *tag.Value
-            break
-          }
-        }
-
-        instances[name] = *instance.InstanceId
-      }
-    }
-
+    instances := getRunningInstances("ap-northeast-2", profile)
     instanceId := askInstanceId(instances)
 
-    startSession(*options.Profile, instanceId)
+    startSession(profile, instanceId)
   },
 }
 
@@ -91,6 +47,55 @@ func askProfile() string {
   survey.AskOne(prompt, &profile)
 
   return profile
+}
+
+func getRunningInstances(region string, profile string) map[string]string {
+  sess, err := session.NewSessionWithOptions(session.Options{
+    Profile: profile,
+    Config: aws.Config{
+      Region: aws.String(region),
+    },
+    SharedConfigState: session.SharedConfigEnable,
+  })
+
+  if err != nil {
+    println(err.Error())
+    panic(err)
+  }
+
+  svc := ec2.New(sess)
+  input := &ec2.DescribeInstancesInput{
+    Filters: []*ec2.Filter{
+      {
+        Name: aws.String("instance-state-name"),
+        Values: []*string{aws.String("running")},
+      },
+    },
+  }
+
+  result, err := svc.DescribeInstances(input)
+  if err != nil {
+    println(err.Error())
+    panic(err)
+  }
+
+  instances := make(map[string]string)
+
+  for _, reservation := range result.Reservations {
+    for _, instance := range reservation.Instances {
+      name := ""
+      for _, tag := range instance.Tags {
+        if *tag.Key == "Name" {
+          name = *tag.Value
+          break
+        }
+      }
+
+      instances[name] = *instance.InstanceId
+    }
+  }
+
+  return instances
 }
 
 func askInstanceId(instances map[string]string) string {
