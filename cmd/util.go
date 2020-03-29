@@ -1,8 +1,12 @@
 package cmd
 
 import (
+  "os"
+  "fmt"
+
   "github.com/aws/aws-sdk-go/aws/session"
   "github.com/aws/aws-sdk-go/aws"
+  "github.com/AlecAivazis/survey/v2/terminal"
 )
 
 func newSession() (*session.Session, error) {
@@ -16,5 +20,17 @@ func newSession() (*session.Session, error) {
     },
     SharedConfigState: session.SharedConfigEnable,
   })
+}
+
+func handleSurveyError(err error) {
+  if err == terminal.InterruptErr {
+    fmt.Println("Interrupted")
+
+    os.Exit(0)
+  }
+
+  if err != nil {
+    panic(err)
+  }
 }
 

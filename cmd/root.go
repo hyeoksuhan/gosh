@@ -26,15 +26,17 @@ func init() {
   RootCmd.PersistentFlags().StringVarP(&awsOpts.profile, "profile", "p", "", "AWS profile name")
 }
 
-func setProfile() {
-  if awsOpts.profile == "" {
-    prompt := &survey.Input{
-      Message: "Profile name:",
-      Default: defaultProfile,
-    }
-
-    survey.AskOne(prompt, &awsOpts.profile)
+func setProfile() error {
+  if awsOpts.profile != "" {
+    return nil
   }
+
+  prompt := &survey.Input{
+    Message: "Profile name:",
+    Default: defaultProfile,
+  }
+
+  return survey.AskOne(prompt, &awsOpts.profile)
 }
 
 func Execute() {
