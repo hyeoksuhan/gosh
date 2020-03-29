@@ -5,8 +5,9 @@ import (
   "os/exec"
   "os/signal"
   "syscall"
-  "github.com/spf13/cobra"
+  "fmt"
 
+  "github.com/spf13/cobra"
   "github.com/AlecAivazis/survey/v2"
   "github.com/aws/aws-sdk-go/aws/session"
   "github.com/aws/aws-sdk-go/aws"
@@ -14,7 +15,6 @@ import (
 )
 
 func init() {
-  cmdStart.Flags().String("profile", "", "AWS profile name")
   RootCmd.AddCommand(cmdStart)
 }
 
@@ -22,47 +22,25 @@ var cmdStart = &cobra.Command{
   Use: "start",
   Short: "Start session with SSM",
   Long: "Start session with SSM",
+  PreRun: func(cmd *cobra.Command, args []string) {
+    setProfile()
+  },
   Run: func(cmd *cobra.Command, args []string) {
-    profile, _ := cmd.Flags().GetString("profile")
+    sess, err := newSession()
 
-    if profile == "" {
-      profile = askProfile()
+    if err != nil {
+      println(err.Error())
+      panic(err)
     }
 
-    instances := getRunningInstances("ap-northeast-2", profile)
+    instances := getRunningInstances(sess)
     instanceId := askInstanceId(instances)
 
-    startSession(profile, instanceId)
+    startSession(instanceId)
   },
 }
 
-func askProfile() string {
-  profile := ""
-
-  prompt := &survey.Input{
-    Message: "Profile name:",
-    Default: "default",
-  }
-
-  survey.AskOne(prompt, &profile)
-
-  return profile
-}
-
-func getRunningInstances(region string, profile string) map[string]string {
-  sess, err := session.NewSessionWithOptions(session.Options{
-    Profile: profile,
-    Config: aws.Config{
-      Region: aws.String(region),
-    },
-    SharedConfigState: session.SharedConfigEnable,
-  })
-
-  if err != nil {
-    println(err.Error())
-    panic(err)
-  }
-
+func getRunningInstances(sess *session.Session) map[string]string {
   svc := ec2.New(sess)
   input := &ec2.DescribeInstancesInput{
     Filters: []*ec2.Filter{
@@ -91,9 +69,8 @@ func getRunningInstances(region string, profile string) map[string]string {
         }
       }
 
-      instances[name] = *instance.InstanceId
-    }
-  }
+      key := fmt.Sprintf("%s  (%s)", name, *instance.InstanceId)
+      instances[key] = *instance.InstanceId } }
 
   return instances
 }
@@ -113,7 +90,7 @@ func askInstanceId(instances map[string]string) string {
     VimMode: true,
   }
 
-  survey.AskOne(prompt, &selectedInstance)
+  survey.AskOne(prompt, &selectedInstance, survey.WithPageSize(20))
 
   instanceId := instances[selectedInstance]
 
@@ -122,6 +99,7 @@ func askInstanceId(instances map[string]string) string {
 
 func runCommand(command string, args ...string) error {
   cmd := exec.Command(command, args...)
+
   cmd.Stdin = os.Stdin
   cmd.Stdout = os.Stdout
   cmd.Stderr = os.Stderr
@@ -133,13 +111,15 @@ func runCommand(command string, args ...string) error {
   return nil
 }
 
-func startSession(profile string, instanceId string) {
+func startSession(instanceId string) {
+  profile := awsOpts.profile
+
   // ignore ctrl+c
   sigch := make(chan os.Signal)
   signal.Notify(sigch, syscall.SIGINT)
   defer close(sigch)
 
-  err := runCommand("aws", "ssm", "start-session","--profile", profile, "--target", instanceId)
+  err := runCommand("aws", "ssm", "start-session", "--profile", profile, "--target", instanceId)
   println("finished session successfully")
 
   if err != nil {
