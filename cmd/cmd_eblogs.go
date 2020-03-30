@@ -6,6 +6,9 @@ import (
   "bufio"
   "fmt"
   "sync"
+  "context"
+  "os/signal"
+  "syscall"
 
   "github.com/spf13/cobra"
   "github.com/AlecAivazis/survey/v2"
@@ -31,16 +34,27 @@ var cmdEBLogs = &cobra.Command{
     profile := awsOpts.profile
     selectedTarget := selectTarget()
 
+    sigs := make(chan os.Signal)
+    signal.Notify(sigs, syscall.SIGINT)
+
+    ctx, cancel := context.WithCancel(context.Background())
+
+    go func() {
+      sig := <-sigs
+      fmt.Println(sig, ", terminate process")
+      cancel()
+    }()
+
     wg := sync.WaitGroup{}
 
     for _, instanceId := range selectedTarget.instanceIds {
       wg.Add(1)
-      go streamlogs(&wg, profile, instanceId, selectedTarget.logPath)
+      go streamlogs(ctx, &wg, profile, instanceId, selectedTarget.logPath)
     }
 
     wg.Wait()
 
-    println("DONE")
+    println("finished gracefully")
   },
 }
 
@@ -83,7 +97,7 @@ func selectTarget() target {
 
 func selectEnv(envs []string) (selectedEnv string, err error) {
   err = survey.AskOne(&survey.Select{
-    Message: "Eivironment name:",
+    Message: "Environment name:",
     Options: envs,
     VimMode: true,
   }, &selectedEnv)
@@ -100,7 +114,7 @@ func selectInstanceIds(instanceIds []string) (selectedIds []string, err error) {
   return
 }
 
-func streamlogs(wg *sync.WaitGroup, profile, instanceId, logPath string) {
+func streamlogs(ctx context.Context, wg *sync.WaitGroup, profile, instanceId, logPath string) {
   proxyCommand := fmt.Sprintf("ProxyCommand=sh -c 'aws ssm start-session --target %%h --document-name AWS-StartSSHSession --parameters portNumber=%%p --profile %s'", profile)
   sshCmd := fmt.Sprintf("ec2-user@%s", instanceId)
   cmd := exec.Command("ssh", "-o", proxyCommand, "-o", "StrictHostKeyChecking=no", sshCmd, "tail", "-f", logPath)
@@ -126,12 +140,18 @@ func streamlogs(wg *sync.WaitGroup, profile, instanceId, logPath string) {
     fmt.Fprintln(os.Stderr, "reading standard output:", err)
   }
 
-  if err := cmd.Wait(); err != nil {
-    fmt.Fprintln(os.Stderr, "failed to wait command", err)
+  // interrupted
+  <-ctx.Done()
+
+  if err := cmd.Process.Kill(); err != nil {
+    fmt.Fprintln(os.Stderr, "failed to kill the process:", err)
   }
 
-  println("command is done", instanceId)
+  if err := cmd.Wait(); err != nil {
+    fmt.Fprintln(os.Stderr, "failed to wait command:", err)
+  }
+
+  println("terminated:", instanceId)
 
   wg.Done()
 }
-
