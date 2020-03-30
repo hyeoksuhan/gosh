@@ -114,13 +114,9 @@ func streamlogs(wg *sync.WaitGroup, profile, instanceId, logPath string) {
 
   scanner := bufio.NewScanner(stdout)
 
-  go func(){
-    err = cmd.Run()
-
-    if err != nil {
-      panic(err)
-    }
-  }()
+  if err := cmd.Start(); err != nil {
+    panic(err)
+  }
 
   for scanner.Scan() {
     fmt.Printf("[%s] %s\r\n", instanceId, scanner.Text())
@@ -129,6 +125,12 @@ func streamlogs(wg *sync.WaitGroup, profile, instanceId, logPath string) {
   if err := scanner.Err(); err != nil {
     fmt.Fprintln(os.Stderr, "reading standard output:", err)
   }
+
+  if err := cmd.Wait(); err != nil {
+    fmt.Fprintln(os.Stderr, "failed to wait command", err)
+  }
+
+  println("command is done", instanceId)
 
   wg.Done()
 }
