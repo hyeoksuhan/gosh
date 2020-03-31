@@ -9,9 +9,12 @@ import (
   "context"
   "os/signal"
   "syscall"
+  "encoding/json"
 
   "github.com/spf13/cobra"
   "github.com/AlecAivazis/survey/v2"
+  "github.com/aws/aws-sdk-go/aws/session"
+  "github.com/aws/aws-sdk-go/service/ssm"
 )
 
 type target struct {
@@ -20,7 +23,10 @@ type target struct {
 }
 
 type streamlogsInput struct {
-  profile, instanceId, logPath string
+  awsOpts AWSopts
+  session *session.Session
+  instanceId string
+  logPath string
   wrapColor func(...interface {}) string
 }
 
@@ -36,7 +42,12 @@ var cmdEBLogs = &cobra.Command{
     handleSurveyError(setProfile())
   },
   Run: func(cmd *cobra.Command, args []string) {
-    selectedTarget := selectTarget()
+    sess, err := newSession()
+    if err != nil {
+      panic(err)
+    }
+
+    selectedTarget := selectTarget(sess)
 
     sigs := make(chan os.Signal)
     signal.Notify(sigs, syscall.SIGINT)
@@ -51,10 +62,12 @@ var cmdEBLogs = &cobra.Command{
 
     wg := sync.WaitGroup{}
 
+
     for i, instanceId := range selectedTarget.instanceIds {
       wg.Add(1)
       go streamlogs(ctx, &wg, streamlogsInput{
-        profile: awsOpts.profile,
+        awsOpts: awsOpts,
+        session: sess,
         instanceId: instanceId,
         logPath: selectedTarget.logPath,
         wrapColor: getColorFunc(i),
@@ -67,13 +80,7 @@ var cmdEBLogs = &cobra.Command{
   },
 }
 
-func selectTarget() target {
-  sess, err := newSession()
-
-  if err != nil {
-    panic(err)
-  }
-
+func selectTarget(sess *session.Session) target {
   ebService, err := newEbService(sess)
 
   if err != nil {
@@ -124,12 +131,56 @@ func selectInstanceIds(instanceIds []string) (selectedIds []string, err error) {
 }
 
 func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) {
+  region := awsOpts.region
+  profile := awsOpts.profile
+  docName := "AWS-StartSSHSession"
+  port := "22"
   instanceId := input.instanceId
 
-  proxyCommand := fmt.Sprintf("ProxyCommand=sh -c 'aws ssm start-session --target %%h --document-name AWS-StartSSHSession --parameters portNumber=%%p --profile %s'", input.profile)
-  sshCmd := fmt.Sprintf("ec2-user@%s", instanceId)
-  cmd := exec.Command("ssh", "-o", proxyCommand, "-o", "StrictHostKeyChecking=no", sshCmd, "tail", "-f", input.logPath)
+  sessionInput := &ssm.StartSessionInput{
+    DocumentName: &docName,
+    Parameters:   map[string][]*string{"portNumber": []*string{&port}},
+    Target:       &instanceId,
+  }
 
+  svc := ssm.New(input.session)
+
+  sessOutput, err := svc.StartSession(sessionInput)
+  if err != nil {
+    panic(err)
+  }
+
+  outputJson, err := json.Marshal(sessOutput)
+  if err != nil {
+    panic(err)
+  }
+
+  sessionInputJson, err := json.Marshal(sessionInput)
+  if err != nil {
+    panic(err)
+  }
+
+  //sessionId := *sessOutput.SessionId
+  proxyCommand := fmt.Sprintf("ProxyCommand=session-manager-plugin '%s' %s %s %s '%s' %s",
+    string(outputJson), region, "StartSession", profile, string(sessionInputJson), svc.Endpoint)
+
+  sshArgs := []string{
+    "-o",
+    proxyCommand,
+    "-o",
+    "StrictHostKeyChecking=no",
+    fmt.Sprintf("ec2-user@%s", instanceId),
+  }
+
+  sshCommand := []string{
+    "tail",
+    "-f",
+    input.logPath,
+  }
+
+  args := append(sshArgs, sshCommand...)
+
+  cmd := exec.Command("ssh", args...)
   cmd.Stdin = os.Stdin
   stdout, err := cmd.StdoutPipe()
 
