@@ -6,11 +6,13 @@ import (
   "os/signal"
   "syscall"
   "fmt"
+  "encoding/json"
 
   "github.com/spf13/cobra"
   "github.com/AlecAivazis/survey/v2"
   "github.com/aws/aws-sdk-go/aws"
   "github.com/aws/aws-sdk-go/aws/session"
+  "github.com/aws/aws-sdk-go/service/ssm"
   "github.com/aws/aws-sdk-go/service/ec2"
 )
 
@@ -43,10 +45,11 @@ var cmdStart = &cobra.Command{
     selectedInstanceOpt, err := selectInstanceId(instanceOptions)
     handleSurveyError(err)
 
+    region := awsOpts.region
     profile := awsOpts.profile
     target := instances[selectedInstanceOpt]
 
-    if err := startSession(profile, target); err != nil {
+    if err := startSession(sess, region, profile, target); err != nil {
       println("run command error:", err.Error())
     }
   },
@@ -112,13 +115,42 @@ func runCommand(command string, args ...string) error {
   return nil
 }
 
-func startSession(profile, instanceId string) error {
+func startSession(sess *session.Session, region, profile, instanceId string) error {
   // ignore ctrl+c
   sigch := make(chan os.Signal)
   signal.Notify(sigch, syscall.SIGINT)
   defer close(sigch)
 
-  err := runCommand("aws", "ssm", "start-session", "--profile", profile, "--target", instanceId)
+  svc := ssm.New(sess)
+
+  input := &ssm.StartSessionInput{
+    Target: &instanceId,
+  }
+
+  sessOutput, err := svc.StartSession(input)
+  if err != nil {
+    panic(err)
+  }
+
+  outputJson, err := json.Marshal(sessOutput)
+  if err != nil {
+    panic(err)
+  }
+
+  inputJson, err := json.Marshal(input)
+  if err != nil {
+    panic(err)
+  }
+
+  err = runCommand("session-manager-plugin",
+    string(outputJson),
+    region,
+    "StartSession",
+    profile,
+    string(inputJson),
+    svc.Endpoint,
+  )
+
   println("finished session")
 
   return err
