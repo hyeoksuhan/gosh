@@ -7,6 +7,8 @@ import (
   "syscall"
   "fmt"
   "encoding/json"
+  "time"
+  "context"
 
   "github.com/spf13/cobra"
   "github.com/AlecAivazis/survey/v2"
@@ -45,12 +47,17 @@ var cmdStart = &cobra.Command{
     selectedInstanceOpt, err := selectInstanceId(instanceOptions)
     handleSurveyError(err)
 
-    region := awsOpts.region
-    profile := awsOpts.profile
     target := instances[selectedInstanceOpt]
 
-    if err := startSession(sess, region, profile, target); err != nil {
+    if sessionId, err := startSession(sess, awsOpts, target); err != nil {
       println("run command error:", err.Error())
+
+      ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+      defer cancel()
+
+      if err := terminateSession(ctx, sess, sessionId); err != nil {
+        panic(err)
+      }
     }
   },
 }
@@ -115,7 +122,10 @@ func runCommand(command string, args ...string) error {
   return nil
 }
 
-func startSession(sess *session.Session, region, profile, instanceId string) error {
+func startSession(sess *session.Session, awsOpts AWSopts, instanceId string) (sessionId string, err error) {
+  region := awsOpts.region
+  profile := awsOpts.profile
+
   // ignore ctrl+c
   sigch := make(chan os.Signal)
   signal.Notify(sigch, syscall.SIGINT)
@@ -129,19 +139,20 @@ func startSession(sess *session.Session, region, profile, instanceId string) err
 
   sessOutput, err := svc.StartSession(input)
   if err != nil {
-    panic(err)
+    return
   }
 
   outputJson, err := json.Marshal(sessOutput)
   if err != nil {
-    panic(err)
+    return
   }
 
   inputJson, err := json.Marshal(input)
   if err != nil {
-    panic(err)
+    return
   }
 
+  sessionId = *sessOutput.SessionId
   err = runCommand("session-manager-plugin",
     string(outputJson),
     region,
@@ -152,6 +163,16 @@ func startSession(sess *session.Session, region, profile, instanceId string) err
   )
 
   println("finished session")
+
+  return
+}
+
+func terminateSession(ctx context.Context, sess *session.Session, sessionId string) error {
+  svc := ssm.New(sess)
+
+  _, err := svc.TerminateSessionWithContext(ctx, &ssm.TerminateSessionInput{
+    SessionId: &sessionId,
+  })
 
   return err
 }
