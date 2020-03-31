@@ -19,6 +19,11 @@ type target struct {
   instanceIds []string
 }
 
+type streamlogsInput struct {
+  profile, instanceId, logPath string
+  wrapColor func(...interface {}) string
+}
+
 func init() {
   RootCmd.AddCommand(cmdEBLogs)
 }
@@ -31,7 +36,6 @@ var cmdEBLogs = &cobra.Command{
     handleSurveyError(setProfile())
   },
   Run: func(cmd *cobra.Command, args []string) {
-    profile := awsOpts.profile
     selectedTarget := selectTarget()
 
     sigs := make(chan os.Signal)
@@ -47,9 +51,14 @@ var cmdEBLogs = &cobra.Command{
 
     wg := sync.WaitGroup{}
 
-    for _, instanceId := range selectedTarget.instanceIds {
+    for i, instanceId := range selectedTarget.instanceIds {
       wg.Add(1)
-      go streamlogs(ctx, &wg, profile, instanceId, selectedTarget.logPath)
+      go streamlogs(ctx, &wg, streamlogsInput{
+        profile: awsOpts.profile,
+        instanceId: instanceId,
+        logPath: selectedTarget.logPath,
+        wrapColor: getColorFunc(i),
+      })
     }
 
     wg.Wait()
@@ -114,10 +123,12 @@ func selectInstanceIds(instanceIds []string) (selectedIds []string, err error) {
   return
 }
 
-func streamlogs(ctx context.Context, wg *sync.WaitGroup, profile, instanceId, logPath string) {
-  proxyCommand := fmt.Sprintf("ProxyCommand=sh -c 'aws ssm start-session --target %%h --document-name AWS-StartSSHSession --parameters portNumber=%%p --profile %s'", profile)
+func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) {
+  instanceId := input.instanceId
+
+  proxyCommand := fmt.Sprintf("ProxyCommand=sh -c 'aws ssm start-session --target %%h --document-name AWS-StartSSHSession --parameters portNumber=%%p --profile %s'", input.profile)
   sshCmd := fmt.Sprintf("ec2-user@%s", instanceId)
-  cmd := exec.Command("ssh", "-o", proxyCommand, "-o", "StrictHostKeyChecking=no", sshCmd, "tail", "-f", logPath)
+  cmd := exec.Command("ssh", "-o", proxyCommand, "-o", "StrictHostKeyChecking=no", sshCmd, "tail", "-f", input.logPath)
 
   cmd.Stdin = os.Stdin
   stdout, err := cmd.StdoutPipe()
@@ -133,7 +144,7 @@ func streamlogs(ctx context.Context, wg *sync.WaitGroup, profile, instanceId, lo
   }
 
   for scanner.Scan() {
-    fmt.Printf("[%s] %s\r\n", instanceId, scanner.Text())
+    fmt.Printf("[%s] %s\r\n", input.wrapColor(instanceId), scanner.Text())
   }
 
   if err := scanner.Err(); err != nil {
