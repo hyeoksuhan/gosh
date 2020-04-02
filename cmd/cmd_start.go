@@ -131,13 +131,11 @@ func startSession(sess *session.Session, awsOpts AWSopts, instanceId string) (se
   signal.Notify(sigch, syscall.SIGINT)
   defer close(sigch)
 
-  svc := ssm.New(sess)
-
   input := &ssm.StartSessionInput{
     Target: &instanceId,
   }
 
-  sessOutput, err := svc.StartSession(input)
+  sessOutput, endpoint, err := createSession(sess, input)
   if err != nil {
     return
   }
@@ -159,21 +157,11 @@ func startSession(sess *session.Session, awsOpts AWSopts, instanceId string) (se
     "StartSession",
     profile,
     string(inputJson),
-    svc.Endpoint,
+    endpoint,
   )
 
   println("finished session")
 
   return
-}
-
-func terminateSession(ctx context.Context, sess *session.Session, sessionId string) error {
-  svc := ssm.New(sess)
-
-  _, err := svc.TerminateSessionWithContext(ctx, &ssm.TerminateSessionInput{
-    SessionId: &sessionId,
-  })
-
-  return err
 }
 

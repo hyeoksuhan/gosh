@@ -62,16 +62,26 @@ var cmdEBLogs = &cobra.Command{
 
     wg := sync.WaitGroup{}
 
-
     for i, instanceId := range selectedTarget.instanceIds {
       wg.Add(1)
-      go streamlogs(ctx, &wg, streamlogsInput{
+
+      input := streamlogsInput{
         awsOpts: awsOpts,
         session: sess,
         instanceId: instanceId,
         logPath: selectedTarget.logPath,
         wrapColor: getColorFunc(i),
-      })
+      }
+
+      go func(input streamlogsInput) {
+        sessionId, err := streamlogs(ctx, &wg, input)
+
+        if err != nil {
+          if err := terminateSession(ctx, sess, sessionId); err != nil {
+            panic(err)
+          }
+        }
+      }(input)
     }
 
     wg.Wait()
@@ -130,7 +140,7 @@ func selectInstanceIds(instanceIds []string) (selectedIds []string, err error) {
   return
 }
 
-func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) {
+func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) (sessionId string, err error) {
   region := awsOpts.region
   profile := awsOpts.profile
   docName := "AWS-StartSSHSession"
@@ -143,26 +153,25 @@ func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) 
     Target:       &instanceId,
   }
 
-  svc := ssm.New(input.session)
-
-  sessOutput, err := svc.StartSession(sessionInput)
+  sessOutput, endpoint, err := createSession(input.session, sessionInput)
   if err != nil {
-    panic(err)
+    return
   }
 
   outputJson, err := json.Marshal(sessOutput)
   if err != nil {
-    panic(err)
+    return
   }
 
   sessionInputJson, err := json.Marshal(sessionInput)
   if err != nil {
-    panic(err)
+    return
   }
 
-  //sessionId := *sessOutput.SessionId
+  sessionId = *sessOutput.SessionId
+
   proxyCommand := fmt.Sprintf("ProxyCommand=session-manager-plugin '%s' %s %s %s '%s' %s",
-    string(outputJson), region, "StartSession", profile, string(sessionInputJson), svc.Endpoint)
+    string(outputJson), region, "StartSession", profile, string(sessionInputJson), endpoint)
 
   sshArgs := []string{
     "-o",
@@ -185,35 +194,44 @@ func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) 
   stdout, err := cmd.StdoutPipe()
 
   if err != nil {
-    panic(err)
+    return
   }
 
   scanner := bufio.NewScanner(stdout)
 
-  if err := cmd.Start(); err != nil {
-    panic(err)
+  err = cmd.Start()
+  if err != nil {
+    return
   }
 
   for scanner.Scan() {
     fmt.Printf("[%s] %s\r\n", input.wrapColor(instanceId), scanner.Text())
   }
 
-  if err := scanner.Err(); err != nil {
+  err = scanner.Err()
+  if err != nil {
     fmt.Fprintln(os.Stderr, "reading standard output:", err)
+    return
   }
 
   // interrupted
   <-ctx.Done()
 
-  if err := cmd.Process.Kill(); err != nil {
+  err = cmd.Process.Kill()
+  if err != nil {
     fmt.Fprintln(os.Stderr, "failed to kill the process:", err)
+    return
   }
 
-  if err := cmd.Wait(); err != nil {
+  err = cmd.Wait()
+  if err != nil {
     fmt.Fprintln(os.Stderr, "failed to wait command:", err)
+    return
   }
 
   println("terminated:", instanceId)
 
   wg.Done()
+
+  return
 }
