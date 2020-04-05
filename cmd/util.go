@@ -6,7 +6,7 @@ import (
   "github.com/fatih/color"
 )
 
-func getColorFunc(i int) func(...interface {}) string {
+func colorf(i int) func(...interface {}) string {
   attributes := []color.Attribute{
     color.FgRed,
     color.FgGreen,

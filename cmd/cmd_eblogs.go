@@ -28,7 +28,7 @@ type streamlogsInput struct {
   service gossm.SSMservice
   instanceId string
   logPath string
-  wrapColor func(...interface {}) string
+  colorf func(...interface {}) string
 }
 
 func init() {
@@ -71,7 +71,7 @@ var cmdEBLogs = &cobra.Command{
         service: svc,
         instanceId: id,
         logPath: target.logPath,
-        wrapColor: getColorFunc(i),
+        colorf: colorf(i),
       }
 
       go func(input streamlogsInput) {
@@ -202,7 +202,7 @@ func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) 
   }
 
   for scanner.Scan() {
-    fmt.Printf("[%s] %s\r\n", input.wrapColor(target), scanner.Text())
+    fmt.Printf("[%s] %s\r\n", input.colorf(target), scanner.Text())
   }
 
   err = scanner.Err()
