@@ -28,18 +28,18 @@ var cmdStart = &cobra.Command{
   Long: "Start session with SSM",
   PreRun: func(cmd *cobra.Command, args []string) {
     if err := setProfile(); err != nil {
-      panic(err)
+      fatal(err)
     }
   },
   Run: func(cmd *cobra.Command, args []string) {
     svc, err := gossm.New(awsOpts.region, awsOpts.profile)
     if err != nil {
-      panic(err)
+      fatal(err)
     }
 
     target, err := getTarget(svc.Session)
     if err != nil {
-      panic(err)
+      fatal(err)
     }
 
     sid, err := startSession(svc, target)

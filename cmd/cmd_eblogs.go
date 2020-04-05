@@ -41,13 +41,13 @@ var cmdEBLogs = &cobra.Command{
   Long: "Tail forwarding Elastic Beanstalk logs for its platform",
   PreRun: func(cmd *cobra.Command, args []string) {
     if err := setProfile(); err != nil {
-      panic(err)
+      fatal(err)
     }
   },
   Run: func(cmd *cobra.Command, args []string) {
     svc, err := gossm.New(awsOpts.region, awsOpts.profile)
     if err != nil {
-      panic(err)
+      fatal(err)
     }
 
     target := selectTarget(svc.Session)
@@ -83,7 +83,7 @@ var cmdEBLogs = &cobra.Command{
           }
 
           if err := terminateSession(svc, sid); err != nil {
-            panic(err)
+            fatal(err)
           }
         }(sid)
 
@@ -102,22 +102,22 @@ var cmdEBLogs = &cobra.Command{
 func selectTarget(sess *session.Session) target {
   svc, err := goeb.New(sess)
   if err != nil {
-    panic(err)
+    fatal(err)
   }
 
   envName , err := selectEnv(svc.EnvNames)
   if err != nil {
-    panic(err)
+    fatal(err)
   }
 
   srcids, err := svc.GetInstanceIds(envName)
   if err != nil {
-    panic(err)
+    fatal(err)
   }
 
   ids, err := selectInstanceIds(srcids)
   if err != nil {
-    panic(err)
+    fatal(err)
   }
 
   return target{
