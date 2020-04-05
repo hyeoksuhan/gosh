@@ -9,8 +9,10 @@ import (
   "context"
   "os/signal"
   "syscall"
-  "encoding/json"
+  "time"
 
+  "github.com/hyeoksuhan/gosh/service/gossm"
+  "github.com/hyeoksuhan/gosh/service/goeb"
   "github.com/spf13/cobra"
   "github.com/AlecAivazis/survey/v2"
   "github.com/aws/aws-sdk-go/aws/session"
@@ -19,19 +21,18 @@ import (
 
 type target struct {
   logPath string
-  instanceIds []string
+  ids []string
 }
 
 type streamlogsInput struct {
-  awsOpts AWSopts
-  session *session.Session
+  service gossm.SSMservice
   instanceId string
   logPath string
   wrapColor func(...interface {}) string
 }
 
 func init() {
-  RootCmd.AddCommand(cmdEBLogs)
+  rootCmd.AddCommand(cmdEBLogs)
 }
 
 var cmdEBLogs = &cobra.Command{
@@ -39,47 +40,55 @@ var cmdEBLogs = &cobra.Command{
   Short: "tail -f Elastic Beanstalk logs",
   Long: "Tail forwarding Elastic Beanstalk logs for its platform",
   PreRun: func(cmd *cobra.Command, args []string) {
-    handleSurveyError(setProfile())
+    if err := setProfile(); err != nil {
+      panic(err)
+    }
   },
   Run: func(cmd *cobra.Command, args []string) {
-    sess, err := newSession()
+    svc, err := gossm.New(awsOpts.region, awsOpts.profile)
     if err != nil {
       panic(err)
     }
 
-    selectedTarget := selectTarget(sess)
+    target := selectTarget(svc.Session)
 
-    sigs := make(chan os.Signal)
-    signal.Notify(sigs, syscall.SIGINT)
+    ch := make(chan os.Signal)
+    signal.Notify(ch, syscall.SIGINT)
 
     ctx, cancel := context.WithCancel(context.Background())
 
     go func() {
-      sig := <-sigs
-      fmt.Println(sig, ", terminate process")
+      fmt.Println(<-ch, ", terminate process")
       cancel()
     }()
 
     wg := sync.WaitGroup{}
 
-    for i, instanceId := range selectedTarget.instanceIds {
+    for i, id := range target.ids {
       wg.Add(1)
 
       input := streamlogsInput{
-        awsOpts: awsOpts,
-        session: sess,
-        instanceId: instanceId,
-        logPath: selectedTarget.logPath,
+        service: svc,
+        instanceId: id,
+        logPath: target.logPath,
         wrapColor: getColorFunc(i),
       }
 
       go func(input streamlogsInput) {
-        sessionId, err := streamlogs(ctx, &wg, input)
+        sid, err := streamlogs(ctx, &wg, input)
 
-        if err != nil {
-          if err := terminateSession(ctx, sess, sessionId); err != nil {
+        defer func(sid string) {
+          if sid == "" {
+            return
+          }
+
+          if err := terminateSession(svc, sid); err != nil {
             panic(err)
           }
+        }(sid)
+
+        if err != nil {
+          panic(err)
         }
       }(input)
     }
@@ -91,94 +100,82 @@ var cmdEBLogs = &cobra.Command{
 }
 
 func selectTarget(sess *session.Session) target {
-  ebService, err := newEbService(sess)
-
+  svc, err := goeb.New(sess)
   if err != nil {
     panic(err)
   }
 
-  selectedEnvName, err := selectEnv(ebService.envNames)
-
+  envName , err := selectEnv(svc.EnvNames)
   if err != nil {
     panic(err)
   }
 
-  instanceIds, err := ebService.getInstanceIds(selectedEnvName)
-
+  srcids, err := svc.GetInstanceIds(envName)
   if err != nil {
     panic(err)
   }
 
-  selectedIds, err := selectInstanceIds(instanceIds)
-
+  ids, err := selectInstanceIds(srcids)
   if err != nil {
     panic(err)
   }
 
   return target{
-    ebService.getLogPath(selectedEnvName),
-    selectedIds,
+    svc.GetLogPath(envName),
+    ids,
   }
 }
 
-func selectEnv(envs []string) (selectedEnv string, err error) {
+func selectEnv(envs []string) (env string, err error) {
   err = survey.AskOne(&survey.Select{
     Message: "Environment name:",
     Options: envs,
     VimMode: true,
-  }, &selectedEnv)
+  }, &env)
 
   return
 }
 
-func selectInstanceIds(instanceIds []string) (selectedIds []string, err error) {
+func selectInstanceIds(ids []string) (selectedIds []string, err error) {
   err = survey.AskOne(&survey.MultiSelect{
     Message: "Select instances:",
-    Options: instanceIds,
+    Options: ids,
   }, &selectedIds)
 
   return
 }
 
-func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) (sessionId string, err error) {
-  region := awsOpts.region
-  profile := awsOpts.profile
+func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) (sid string, err error) {
   docName := "AWS-StartSSHSession"
   port := "22"
-  instanceId := input.instanceId
+  target := input.instanceId
 
-  sessionInput := &ssm.StartSessionInput{
+  output, err := input.service.StartSession(&ssm.StartSessionInput{
     DocumentName: &docName,
-    Parameters:   map[string][]*string{"portNumber": []*string{&port}},
-    Target:       &instanceId,
-  }
-
-  sessOutput, endpoint, err := createSession(input.session, sessionInput)
+    Parameters: map[string][]*string{"portNumber": []*string{&port}},
+    Target: &target,
+  })
   if err != nil {
     return
   }
 
-  outputJson, err := json.Marshal(sessOutput)
-  if err != nil {
-    return
-  }
+  sid = output.SessionId
 
-  sessionInputJson, err := json.Marshal(sessionInput)
-  if err != nil {
-    return
-  }
+  cmdWithArgs := func() []interface{} {
+    l := append([]string{output.Command}, output.CommandArgs...)
+    r := make([]interface{}, len(l))
+    for i, v := range l { r[i] = v }
+    return r
+  }()
 
-  sessionId = *sessOutput.SessionId
-
-  proxyCommand := fmt.Sprintf("ProxyCommand=session-manager-plugin '%s' %s %s %s '%s' %s",
-    string(outputJson), region, "StartSession", profile, string(sessionInputJson), endpoint)
+  proxy := fmt.Sprintf("ProxyCommand=%s '%s' %s %s %s '%s' %s", cmdWithArgs...)
 
   sshArgs := []string{
     "-o",
-    proxyCommand,
+    proxy,
     "-o",
     "StrictHostKeyChecking=no",
-    fmt.Sprintf("ec2-user@%s", instanceId),
+    fmt.Sprintf("ec2-user@%s", target),
   }
 
   sshCommand := []string{
@@ -205,7 +202,7 @@ func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) 
   }
 
   for scanner.Scan() {
-    fmt.Printf("[%s] %s\r\n", input.wrapColor(instanceId), scanner.Text())
+    fmt.Printf("[%s] %s\r\n", input.wrapColor(target), scanner.Text())
   }
 
   err = scanner.Err()
@@ -229,9 +226,17 @@ func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) 
     return
   }
 
-  println("terminated:", instanceId)
+  println("terminated:", target)
 
   wg.Done()
 
   return
 }
+
+func terminateSession(svc gossm.SSMservice, sid string) error {
+  ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+  defer cancel()
+
+  return svc.TerminateSession(ctx, sid)
+}
+

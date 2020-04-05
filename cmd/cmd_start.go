@@ -6,10 +6,10 @@ import (
   "os/signal"
   "syscall"
   "fmt"
-  "encoding/json"
   "time"
   "context"
 
+  "github.com/hyeoksuhan/gosh/service/gossm"
   "github.com/spf13/cobra"
   "github.com/AlecAivazis/survey/v2"
   "github.com/aws/aws-sdk-go/aws"
@@ -19,7 +19,7 @@ import (
 )
 
 func init() {
-  RootCmd.AddCommand(cmdStart)
+  rootCmd.AddCommand(cmdStart)
 }
 
 var cmdStart = &cobra.Command{
@@ -27,42 +27,47 @@ var cmdStart = &cobra.Command{
   Short: "Start session with SSM",
   Long: "Start session with SSM",
   PreRun: func(cmd *cobra.Command, args []string) {
-    handleSurveyError(setProfile())
+    if err := setProfile(); err != nil {
+      panic(err)
+    }
   },
   Run: func(cmd *cobra.Command, args []string) {
-    sess, err := newSession()
-
+    svc, err := gossm.New(awsOpts.region, awsOpts.profile)
     if err != nil {
       panic(err)
     }
 
-    instances := getRunningInstances(sess)
-
-    instanceOptions := []string{}
-
-    for name := range(instances) {
-      instanceOptions = append(instanceOptions, name)
+    target, err := getTarget(svc.Session)
+    if err != nil {
+      panic(err)
     }
 
-    selectedInstanceOpt, err := selectInstanceId(instanceOptions)
-    handleSurveyError(err)
+    sid, err := startSession(svc, target)
 
-    target := instances[selectedInstanceOpt]
-
-    if sessionId, err := startSession(sess, awsOpts, target); err != nil {
-      println("run command error:", err.Error())
-
+    defer func(sid string) {
       ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
       defer cancel()
 
-      if err := terminateSession(ctx, sess, sessionId); err != nil {
+      if sid == "" {
+        return
+      }
+
+      if err := svc.TerminateSession(ctx, sid); err != nil {
         panic(err)
       }
+
+      print("terminated session")
+    }(sid)
+
+    if err != nil {
+      panic(err)
     }
   },
 }
 
-func getRunningInstances(sess *session.Session) map[string]string {
+func getRunningInstances(sess *session.Session) (result map[string]string, err error) {
+  result = make(map[string]string)
+
   svc := ec2.New(sess)
 
   desc, err := svc.DescribeInstances(&ec2.DescribeInstancesInput{
@@ -75,13 +80,11 @@ func getRunningInstances(sess *session.Session) map[string]string {
   })
 
   if err != nil {
-    panic(err)
+    return
   }
 
-  instances := make(map[string]string)
-
-  for _, reservation := range desc.Reservations {
-    for _, instance := range reservation.Instances {
+  for _, r := range desc.Reservations {
+    for _, instance := range r.Instances {
       name := ""
       for _, tag := range instance.Tags {
         if *tag.Key == "Name" {
@@ -91,19 +94,40 @@ func getRunningInstances(sess *session.Session) map[string]string {
       }
 
       key := fmt.Sprintf("%s  (%s)", name, *instance.InstanceId)
-      instances[key] = *instance.InstanceId } }
+      result[key] = *instance.InstanceId
+    }
+  }
 
-  return instances
+  return
 }
 
-func selectInstanceId(instanceOpts []string) (selectedInstanceOpt string, err error) {
-  selectedInstanceOpt = ""
+func getTarget(sess *session.Session) (string, error) {
+  instances, err := getRunningInstances(sess)
+  if err != nil {
+    return "", err
+  }
+
+  names := []string{}
+  for name := range(instances) {
+    names = append(names, name)
+  }
+
+  selected, err := selectInstance(names)
+  if err != nil {
+    return "", err
+  }
+
+  return instances[selected], nil
+}
+
+func selectInstance(names []string) (result string, err error) {
+  result = ""
 
   err = survey.AskOne(&survey.Select{
     Message: "Instance:",
-    Options: instanceOpts,
+    Options: names,
     VimMode: true,
-  }, &selectedInstanceOpt, survey.WithPageSize(20))
+  }, &result, survey.WithPageSize(20))
 
   return
 }
@@ -122,43 +146,20 @@ func runCommand(command string, args ...string) error {
   return nil
 }
 
-func startSession(sess *session.Session, awsOpts AWSopts, instanceId string) (sessionId string, err error) {
-  region := awsOpts.region
-  profile := awsOpts.profile
+func startSession(svc gossm.SSMservice, target string) (sid string, err error) {
+  ch := make(chan os.Signal)
+  signal.Notify(ch, syscall.SIGINT)
+  defer close(ch)
 
-  // ignore ctrl+c
-  sigch := make(chan os.Signal)
-  signal.Notify(sigch, syscall.SIGINT)
-  defer close(sigch)
-
-  input := &ssm.StartSessionInput{
-    Target: &instanceId,
-  }
-
-  sessOutput, endpoint, err := createSession(sess, input)
+  output, err := svc.StartSession(&ssm.StartSessionInput{
+    Target: &target,
+  })
   if err != nil {
     return
   }
 
-  outputJson, err := json.Marshal(sessOutput)
-  if err != nil {
-    return
-  }
-
-  inputJson, err := json.Marshal(input)
-  if err != nil {
-    return
-  }
-
-  sessionId = *sessOutput.SessionId
-  err = runCommand("session-manager-plugin",
-    string(outputJson),
-    region,
-    "StartSession",
-    profile,
-    string(inputJson),
-    endpoint,
-  )
+  sid = output.SessionId
+  err = runCommand(output.Command, output.CommandArgs...)
 
   println("finished session")
 

@@ -5,11 +5,13 @@ import (
   "github.com/AlecAivazis/survey/v2"
 )
 
-const defaultRegion = "ap-northeast-2"
-const defaultProfile = "default"
+const (
+  defaultRegion = "ap-northeast-2"
+  defaultProfile = "default"
+)
 
 var (
-  RootCmd = &cobra.Command{
+  rootCmd = &cobra.Command{
     Use: "gosh",
     Short: "gosh is a tool to use SSM easily",
   }
@@ -22,8 +24,8 @@ type AWSopts struct {
 }
 
 func init() {
-  RootCmd.PersistentFlags().StringVarP(&awsOpts.region, "region", "r", defaultRegion, "AWS Region")
-  RootCmd.PersistentFlags().StringVarP(&awsOpts.profile, "profile", "p", "", "AWS profile name")
+  rootCmd.PersistentFlags().StringVarP(&awsOpts.region, "region", "r", defaultRegion, "AWS Region")
+  rootCmd.PersistentFlags().StringVarP(&awsOpts.profile, "profile", "p", "", "AWS profile name")
 }
 
 func setProfile() error {
@@ -31,15 +33,13 @@ func setProfile() error {
     return nil
   }
 
-  prompt := &survey.Input{
+  return survey.AskOne(&survey.Input{
     Message: "Profile name:",
     Default: defaultProfile,
-  }
-
-  return survey.AskOne(prompt, &awsOpts.profile)
+  }, &awsOpts.profile)
 }
 
 func Execute() {
-  RootCmd.Execute()
+  rootCmd.Execute()
 }
 
