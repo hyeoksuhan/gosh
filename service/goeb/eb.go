@@ -1,4 +1,4 @@
-package cmd
+package goeb
 
 import (
   "strings"
@@ -8,25 +8,24 @@ import (
   eb "github.com/aws/aws-sdk-go/service/elasticbeanstalk"
 )
 
-type ebService struct {
+type EBservice struct {
   ebInstance *eb.ElasticBeanstalk
-  envNames []string
+  EnvNames []string
   envStackMap map[string]string
   envPathMap map[string]string
 }
 
-func newEbService(sess *session.Session) (instance ebService, err error ) {
+func New(sess *session.Session) (instance EBservice, err error ) {
   svc := eb.New(sess)
 
   envs, err := svc.DescribeEnvironments(&eb.DescribeEnvironmentsInput{})
-
   if err != nil {
     return
   }
 
-  instance = ebService{
+  instance = EBservice{
     ebInstance: svc,
-    envNames: []string{},
+    EnvNames: []string{},
     envStackMap: make(map[string]string),
     envPathMap: map[string]string{
       "node.js": "/var/log/nodejs/nodejs.log",
@@ -38,15 +37,15 @@ func newEbService(sess *session.Session) (instance ebService, err error ) {
     envName := *env.EnvironmentName
     stackName := *env.SolutionStackName
 
-    instance.envNames = append(instance.envNames, *env.EnvironmentName)
+    instance.EnvNames = append(instance.EnvNames, *env.EnvironmentName)
     instance.envStackMap[envName] = stackName
   }
 
   return
 }
 
-func (svc ebService) isValidEnvName(envName string) bool {
-  for _, v := range svc.envNames {
+func (svc EBservice) isValidEnvName(envName string) bool {
+  for _, v := range svc.EnvNames {
     if v == envName {
       return true
     }
@@ -56,7 +55,7 @@ func (svc ebService) isValidEnvName(envName string) bool {
 }
 
 
-func (svc ebService) getInstanceIds(envName string) (instanceIds []string, err error) {
+func (svc EBservice) GetInstanceIds(envName string) (instanceIds []string, err error) {
   validEnvName := svc.isValidEnvName(envName)
 
   if !validEnvName {
@@ -78,11 +77,11 @@ func (svc ebService) getInstanceIds(envName string) (instanceIds []string, err e
   return
 }
 
-func (svc ebService) getStackName(envName string) string {
+func (svc EBservice) getStackName(envName string) string {
   return svc.envStackMap[envName]
 }
 
-func (svc ebService) getLogPath(envName string) string {
+func (svc EBservice) GetLogPath(envName string) string {
   stackName := svc.getStackName(envName)
 
   for k, v := range svc.envPathMap {
