@@ -10,13 +10,14 @@ import (
   "os/signal"
   "syscall"
   "time"
+  "strings"
 
   "github.com/hyeoksuhan/gosh/service/gossm"
   "github.com/hyeoksuhan/gosh/service/goeb"
-  "github.com/spf13/cobra"
-  "github.com/AlecAivazis/survey/v2"
   "github.com/aws/aws-sdk-go/aws/session"
   "github.com/aws/aws-sdk-go/service/ssm"
+  "github.com/spf13/cobra"
+  "github.com/AlecAivazis/survey/v2"
 )
 
 type target struct {
@@ -28,6 +29,7 @@ type streamlogsInput struct {
   service gossm.SSMservice
   instanceId string
   logPath string
+  grep string
   colorf func(...interface {}) string
 }
 
@@ -51,6 +53,7 @@ var cmdEBLogs = &cobra.Command{
     }
 
     target := selectTarget(svc.Session)
+    grep := askGrep()
 
     ch := make(chan os.Signal)
     signal.Notify(ch, syscall.SIGINT)
@@ -72,6 +75,7 @@ var cmdEBLogs = &cobra.Command{
         instanceId: id,
         logPath: target.logPath,
         colorf: colorf(i),
+        grep: grep,
       }
 
       go func(input streamlogsInput) {
@@ -136,6 +140,16 @@ func selectEnv(envs []string) (env string, err error) {
   return
 }
 
+func askGrep() string {
+  grep := ""
+
+  survey.AskOne(&survey.Input{
+    Message: "grep",
+  }, &grep)
+
+  return grep
+}
+
 func selectInstanceIds(ids []string) (selectedIds []string, err error) {
   err = survey.AskOne(&survey.MultiSelect{
     Message: "Select instances:",
@@ -184,6 +198,11 @@ func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) 
     input.logPath,
   }
 
+  if input.grep != "" {
+    sshCommand = append(sshCommand, fmt.Sprintf("| grep %s", input.grep))
+  }
+
+  fmt.Printf("%v\n", sshCommand)
   args := append(sshArgs, sshCommand...)
 
   cmd := exec.Command("ssh", args...)
@@ -202,7 +221,13 @@ func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) 
   }
 
   for scanner.Scan() {
-    fmt.Printf("[%s] %s\r\n", input.colorf(target), scanner.Text())
+    line := scanner.Text()
+
+    if input.grep != "" {
+      line = strings.Replace(line, input.grep, input.colorf(input.grep), 1)
+    }
+
+    fmt.Printf("[%s] %s\r\n", input.colorf(target), line)
   }
 
   err = scanner.Err()
