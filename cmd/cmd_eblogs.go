@@ -202,7 +202,6 @@ func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) 
     sshCommand = append(sshCommand, fmt.Sprintf("| grep %s", input.grep))
   }
 
-  fmt.Printf("%v\n", sshCommand)
   args := append(sshArgs, sshCommand...)
 
   cmd := exec.Command("ssh", args...)
