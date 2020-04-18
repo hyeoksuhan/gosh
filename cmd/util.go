@@ -1,10 +1,12 @@
 package cmd
 
 import (
+  "os"
+
   "github.com/fatih/color"
 )
 
-func getColorFunc(i int) func(...interface {}) string {
+func colorf(i int) func(...interface {}) string {
   attributes := []color.Attribute{
     color.FgRed,
     color.FgGreen,
@@ -25,5 +27,10 @@ func getColorFunc(i int) func(...interface {}) string {
   selected := attributes[i % len(attributes)]
 
   return color.New(selected).SprintFunc()
+}
+
+func fatal(err error) {
+  color.Red(err.Error())
+  os.Exit(1)
 }
 

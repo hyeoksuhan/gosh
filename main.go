@@ -1,4 +1,4 @@
-package main
+package main // import "github.com/hyeoksuhan/gosh"
 
 import (
   "github.com/hyeoksuhan/gosh/cmd"

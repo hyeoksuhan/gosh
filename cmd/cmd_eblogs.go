@@ -10,13 +10,14 @@ import (
   "os/signal"
   "syscall"
   "time"
+  "strings"
 
   "github.com/hyeoksuhan/gosh/service/gossm"
   "github.com/hyeoksuhan/gosh/service/goeb"
-  "github.com/spf13/cobra"
-  "github.com/AlecAivazis/survey/v2"
   "github.com/aws/aws-sdk-go/aws/session"
   "github.com/aws/aws-sdk-go/service/ssm"
+  "github.com/spf13/cobra"
+  "github.com/AlecAivazis/survey/v2"
 )
 
 type target struct {
@@ -28,7 +29,8 @@ type streamlogsInput struct {
   service gossm.SSMservice
   instanceId string
   logPath string
-  wrapColor func(...interface {}) string
+  grep string
+  colorf func(...interface {}) string
 }
 
 func init() {
@@ -41,16 +43,17 @@ var cmdEBLogs = &cobra.Command{
   Long: "Tail forwarding Elastic Beanstalk logs for its platform",
   PreRun: func(cmd *cobra.Command, args []string) {
     if err := setProfile(); err != nil {
-      panic(err)
+      fatal(err)
     }
   },
   Run: func(cmd *cobra.Command, args []string) {
     svc, err := gossm.New(awsOpts.region, awsOpts.profile)
     if err != nil {
-      panic(err)
+      fatal(err)
     }
 
     target := selectTarget(svc.Session)
+    grep := askGrep()
 
     ch := make(chan os.Signal)
     signal.Notify(ch, syscall.SIGINT)
@@ -71,7 +74,8 @@ var cmdEBLogs = &cobra.Command{
         service: svc,
         instanceId: id,
         logPath: target.logPath,
-        wrapColor: getColorFunc(i),
+        colorf: colorf(i),
+        grep: grep,
       }
 
       go func(input streamlogsInput) {
@@ -83,7 +87,7 @@ var cmdEBLogs = &cobra.Command{
           }
 
           if err := terminateSession(svc, sid); err != nil {
-            panic(err)
+            fatal(err)
           }
         }(sid)
 
@@ -102,22 +106,22 @@ var cmdEBLogs = &cobra.Command{
 func selectTarget(sess *session.Session) target {
   svc, err := goeb.New(sess)
   if err != nil {
-    panic(err)
+    fatal(err)
   }
 
   envName , err := selectEnv(svc.EnvNames)
   if err != nil {
-    panic(err)
+    fatal(err)
   }
 
   srcids, err := svc.GetInstanceIds(envName)
   if err != nil {
-    panic(err)
+    fatal(err)
   }
 
   ids, err := selectInstanceIds(srcids)
   if err != nil {
-    panic(err)
+    fatal(err)
   }
 
   return target{
@@ -134,6 +138,16 @@ func selectEnv(envs []string) (env string, err error) {
   }, &env)
 
   return
+}
+
+func askGrep() string {
+  grep := ""
+
+  survey.AskOne(&survey.Input{
+    Message: "grep",
+  }, &grep)
+
+  return grep
 }
 
 func selectInstanceIds(ids []string) (selectedIds []string, err error) {
@@ -184,6 +198,10 @@ func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) 
     input.logPath,
   }
 
+  if input.grep != "" {
+    sshCommand = append(sshCommand, fmt.Sprintf("| grep %s", input.grep))
+  }
+
   args := append(sshArgs, sshCommand...)
 
   cmd := exec.Command("ssh", args...)
@@ -202,7 +220,13 @@ func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) 
   }
 
   for scanner.Scan() {
-    fmt.Printf("[%s] %s\r\n", input.wrapColor(target), scanner.Text())
+    line := scanner.Text()
+
+    if input.grep != "" {
+      line = strings.Replace(line, input.grep, input.colorf(input.grep), 1)
+    }
+
+    fmt.Printf("[%s] %s\r\n", input.colorf(target), line)
   }
 
   err = scanner.Err()
