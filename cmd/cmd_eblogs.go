@@ -198,10 +198,6 @@ func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) 
     input.logPath,
   }
 
-  if input.grep != "" {
-    sshCommand = append(sshCommand, fmt.Sprintf("| grep %s", input.grep))
-  }
-
   args := append(sshArgs, sshCommand...)
 
   cmd := exec.Command("ssh", args...)
@@ -220,10 +216,9 @@ func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) 
   }
 
   for scanner.Scan() {
-    line := scanner.Text()
-
-    if input.grep != "" {
-      line = strings.Replace(line, input.grep, input.colorf(input.grep), 1)
+    line := strings.Replace(scanner.Text(), input.grep, input.colorf(input.grep), 1)
+    if input.grep != "" && !strings.Contains(line, input.grep) {
+      continue
     }
 
     fmt.Printf("[%s] %s\r\n", input.colorf(target), line)
