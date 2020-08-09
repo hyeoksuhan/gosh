@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -144,7 +145,7 @@ func askGrep() string {
 	grep := ""
 
 	survey.AskOne(&survey.Input{
-		Message: "grep",
+		Message: "grep regex",
 	}, &grep)
 
 	return grep
@@ -217,9 +218,15 @@ func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) 
 		return
 	}
 
+	re := regexp.MustCompile(input.grep)
 	for scanner.Scan() {
-		line := strings.Replace(scanner.Text(), input.grep, input.colorf(input.grep), 1)
-		if input.grep != "" && !strings.Contains(line, input.grep) {
+		line := scanner.Text()
+		match := re.FindAllString(line, -1)
+		for _, m := range match {
+			line = strings.Replace(line, m, input.colorf(m), 1)
+		}
+
+		if input.grep != "" && len(match) == 0 {
 			continue
 		}
 
