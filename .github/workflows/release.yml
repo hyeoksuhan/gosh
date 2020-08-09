@@ -2,6 +2,8 @@ name: goreleaser
 
 on:
   push:
+    tags:
+      - v*.*.*
 
 jobs:
   goreleaser:
@@ -21,7 +23,6 @@ jobs:
         name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v2
         with:
-          version: latest
-          args: release --rm-dist
+          args: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
