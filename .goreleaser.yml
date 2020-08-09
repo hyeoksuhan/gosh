@@ -34,5 +34,3 @@ release:
   github:
     owner: hyeoksuhan
     name: gosh
-
-  prerelease: true
