@@ -35,4 +35,4 @@ release:
     owner: hyeoksuhan
     name: gosh
 
-prerelease: true
+  prerelease: true
