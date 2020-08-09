@@ -145,7 +145,7 @@ func askGrep() string {
 	grep := ""
 
 	survey.AskOne(&survey.Input{
-		Message: "grep regex",
+		Message: "grep regex:",
 	}, &grep)
 
 	return grep
