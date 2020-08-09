@@ -158,7 +158,7 @@ func startSession(svc gossm.SSMservice, target string) (sid string, err error) {
 		return
 	}
 
-	sid = output.SessionId
+	sid = output.SessionID
 	err = runCommand(output.Command, output.CommandArgs...)
 
 	println("finished session")

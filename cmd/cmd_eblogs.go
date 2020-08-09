@@ -27,7 +27,7 @@ type target struct {
 
 type streamlogsInput struct {
 	service    gossm.SSMservice
-	instanceId string
+	instanceID string
 	logPath    string
 	grep       string
 	colorf     func(...interface{}) string
@@ -72,7 +72,7 @@ var cmdEBLogs = &cobra.Command{
 
 			input := streamlogsInput{
 				service:    svc,
-				instanceId: id,
+				instanceID: id,
 				logPath:    target.logPath,
 				colorf:     colorf(i),
 				grep:       grep,
@@ -162,18 +162,18 @@ func selectInstanceIds(ids []string) (selectedIds []string, err error) {
 func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) (sid string, err error) {
 	docName := "AWS-StartSSHSession"
 	port := "22"
-	target := input.instanceId
+	target := input.instanceID
 
 	output, err := input.service.StartSession(&ssm.StartSessionInput{
 		DocumentName: &docName,
-		Parameters:   map[string][]*string{"portNumber": []*string{&port}},
+		Parameters:   map[string][]*string{"portNumber": {&port}},
 		Target:       &target,
 	})
 	if err != nil {
 		return
 	}
 
-	sid = output.SessionId
+	sid = output.SessionID
 
 	cmdWithArgs := func() []interface{} {
 		l := append([]string{output.Command}, output.CommandArgs...)

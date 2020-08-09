@@ -8,6 +8,7 @@ import (
 	eb "github.com/aws/aws-sdk-go/service/elasticbeanstalk"
 )
 
+// EBservice is service for AWS ElasticBeanstalk
 type EBservice struct {
 	ebInstance  *eb.ElasticBeanstalk
 	EnvNames    []string
@@ -15,6 +16,7 @@ type EBservice struct {
 	envPathMap  map[string]string
 }
 
+// New creates new EBservice
 func New(sess *session.Session) (instance EBservice, err error) {
 	svc := eb.New(sess)
 
@@ -54,6 +56,7 @@ func (svc EBservice) isValidEnvName(envName string) bool {
 	return false
 }
 
+// GetInstanceIds returns EC2 instance ids
 func (svc EBservice) GetInstanceIds(envName string) (instanceIds []string, err error) {
 	validEnvName := svc.isValidEnvName(envName)
 
@@ -80,6 +83,7 @@ func (svc EBservice) getStackName(envName string) string {
 	return svc.envStackMap[envName]
 }
 
+// GetLogPath returns app log path matched with platform
 func (svc EBservice) GetLogPath(envName string) string {
 	stackName := svc.getStackName(envName)
 

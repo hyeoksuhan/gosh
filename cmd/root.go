@@ -19,6 +19,7 @@ var (
 	awsOpts = AWSopts{}
 )
 
+// AWSopts contains region, profile
 type AWSopts struct {
 	region, profile string
 }
@@ -39,6 +40,7 @@ func setProfile() error {
 	}, &awsOpts.profile)
 }
 
+// Execute rootCmd
 func Execute() {
 	rootCmd.Execute()
 }
