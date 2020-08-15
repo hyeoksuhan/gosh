@@ -30,8 +30,17 @@ type streamlogsInput struct {
 	service    gossm.SSMservice
 	instanceID string
 	logPath    string
-	grep       string
+	grepOpt    grepOpt
 	colorf     func(...interface{}) string
+}
+
+type grepOpt struct {
+	regexp string
+	aCount int
+}
+
+func (o grepOpt) isEmpty() bool {
+	return o.regexp == ""
 }
 
 func init() {
@@ -54,7 +63,7 @@ var cmdEBLogs = &cobra.Command{
 		}
 
 		target := selectTarget(svc.Session)
-		grep := askGrep()
+		grepOpt := askGrepOpt()
 
 		ch := make(chan os.Signal)
 		signal.Notify(ch, syscall.SIGINT)
@@ -76,7 +85,7 @@ var cmdEBLogs = &cobra.Command{
 				instanceID: id,
 				logPath:    target.logPath,
 				colorf:     colorf(i),
-				grep:       grep,
+				grepOpt:    grepOpt,
 			}
 
 			go func(input streamlogsInput) {
@@ -141,14 +150,20 @@ func selectEnv(envs []string) (env string, err error) {
 	return
 }
 
-func askGrep() string {
-	grep := ""
+func askGrepOpt() grepOpt {
+	grepOpt := grepOpt{}
 
 	survey.AskOne(&survey.Input{
 		Message: "grep regex:",
-	}, &grep)
+	}, &grepOpt.regexp)
 
-	return grep
+	if !grepOpt.isEmpty() {
+		survey.AskOne(&survey.Input{
+			Message: "grep -A:",
+		}, &grepOpt.aCount)
+	}
+
+	return grepOpt
 }
 
 func selectInstanceIds(ids []string) (selectedIds []string, err error) {
@@ -218,19 +233,28 @@ func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) 
 		return
 	}
 
-	re := regexp.MustCompile(input.grep)
+	grepOpt := input.grepOpt
+	re := regexp.MustCompile(grepOpt.regexp)
+	remain := 0
 	for scanner.Scan() {
 		line := scanner.Text()
 		match := re.FindAllString(line, -1)
+		matched := len(match) > 0
+
+		if matched {
+			remain = grepOpt.aCount
+		}
+
+		if !grepOpt.isEmpty() && !matched && remain < 0 {
+			continue
+		}
+
 		for _, m := range match {
 			line = strings.Replace(line, m, input.colorf(m), 1)
 		}
 
-		if input.grep != "" && len(match) == 0 {
-			continue
-		}
-
 		fmt.Printf("[%s] %s\r\n", input.colorf(target), line)
+		remain--
 	}
 
 	err = scanner.Err()
