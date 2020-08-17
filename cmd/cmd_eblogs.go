@@ -227,6 +227,9 @@ func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) 
 	}
 
 	scanner := bufio.NewScanner(stdout)
+	// to prevent 'token too long' error
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
 
 	err = cmd.Start()
 	if err != nil {
