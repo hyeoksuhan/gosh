@@ -40,7 +40,7 @@ type grepOpt struct {
 }
 
 func (o grepOpt) isEmpty() bool {
-	return o.regexp == ""
+	return strings.TrimSpace(o.regexp) == ""
 }
 
 func init() {
@@ -238,17 +238,21 @@ func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) 
 
 	grepOpt := input.grepOpt
 	re := regexp.MustCompile(grepOpt.regexp)
+	cTarget := input.colorf(target)
 	remain := 0
 	for scanner.Scan() {
 		line := scanner.Text()
-		match := re.FindAllString(line, -1)
-		matched := len(match) > 0
 
-		if matched {
-			remain = grepOpt.aCount
+		if grepOpt.isEmpty() {
+			printTargetLog(cTarget, line)
+			continue
 		}
 
-		if !grepOpt.isEmpty() && !matched && remain < 0 {
+		match := re.FindAllString(line, -1)
+		matched := len(match) > 0
+		loggable := matched || remain > 0
+
+		if !loggable {
 			continue
 		}
 
@@ -256,8 +260,20 @@ func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) 
 			line = strings.Replace(line, m, input.colorf(m), 1)
 		}
 
-		fmt.Printf("[%s] %s\r\n", input.colorf(target), line)
-		remain--
+		printTargetLog(cTarget, line)
+
+		if grepOpt.aCount == 0 {
+			continue
+		}
+
+		if matched {
+			remain = grepOpt.aCount
+			continue
+		}
+
+		if remain--; remain == 0 {
+			fmt.Printf(input.colorf("--") + "\r\n")
+		}
 	}
 
 	err = scanner.Err()
@@ -286,6 +302,10 @@ func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) 
 	wg.Done()
 
 	return
+}
+
+func printTargetLog(target string, log string) {
+	fmt.Printf("[%s] %s\r\n", target, log)
 }
 
 func terminateSession(svc gossm.SSMservice, sid string) error {
