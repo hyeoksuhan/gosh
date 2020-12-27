@@ -13,7 +13,7 @@ type EBservice struct {
 	ebInstance  *eb.ElasticBeanstalk
 	EnvNames    []string
 	envStackMap map[string]string
-	envPathMap  map[string]string
+	envPathMap  map[string][]string
 }
 
 // New creates new EBservice
@@ -29,9 +29,9 @@ func New(sess *session.Session) (instance EBservice, err error) {
 		ebInstance:  svc,
 		EnvNames:    []string{},
 		envStackMap: make(map[string]string),
-		envPathMap: map[string]string{
-			"node.js": "/var/log/nodejs/nodejs.log",
-			"java":    "/var/log/web-1.log",
+		envPathMap: map[string][]string{
+			"node.js": []string{"/var/log/nodejs/nodejs.log"},
+			"java":    []string{"/var/log/web-1.log", "/var/log/web-1.error.log"},
 		},
 	}
 
@@ -84,7 +84,7 @@ func (svc EBservice) getStackName(envName string) string {
 }
 
 // GetLogPath returns app log path matched with platform
-func (svc EBservice) GetLogPath(envName string) string {
+func (svc EBservice) GetLogPath(envName string) []string {
 	stackName := svc.getStackName(envName)
 
 	for k, v := range svc.envPathMap {
@@ -93,5 +93,5 @@ func (svc EBservice) GetLogPath(envName string) string {
 		}
 	}
 
-	return ""
+	return []string{}
 }

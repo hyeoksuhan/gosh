@@ -22,14 +22,14 @@ import (
 )
 
 type target struct {
-	logPath string
+	logPath []string
 	ids     []string
 }
 
 type streamlogsInput struct {
 	service    gossm.SSMservice
 	instanceID string
-	logPath    string
+	logPath    []string
 	grepOpt    grepOpt
 	colorf     func(...interface{}) string
 }
@@ -212,8 +212,10 @@ func streamlogs(ctx context.Context, wg *sync.WaitGroup, input streamlogsInput) 
 
 	sshCommand := []string{
 		"tail",
-		"-f",
-		input.logPath,
+	}
+
+	for _, p := range input.logPath {
+		sshCommand = append(sshCommand, "-F", p)
 	}
 
 	args := append(sshArgs, sshCommand...)
